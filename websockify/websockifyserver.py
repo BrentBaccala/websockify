@@ -15,6 +15,7 @@ as taken from http://docs.python.org/dev/library/ssl.html#certificates
 import os, sys, time, errno, signal, socket, select, logging
 import multiprocessing
 from http.server import SimpleHTTPRequestHandler
+from .websocket import WebSocket
 
 # Degraded functionality if these imports are missing
 for mod, msg in [('ssl', 'TLS/SSL/wss is disabled'),
@@ -130,7 +131,10 @@ class WebSockifyRequestHandler(WebSocketRequestHandlerMixIn, SimpleHTTPRequestHa
             for buf in bufs:
                 if self.rec:
                     # Python 3 compatible conversion
-                    bufstr = buf.decode('latin1').encode('unicode_escape').decode('ascii').replace("'", "\\'")
+                    if isinstance(buf, bytes):
+                        bufstr = buf.decode('latin1').encode('unicode_escape').decode('ascii').replace("'", "\\'")
+                    else:
+                        bufstr = buf.encode('unicode_escape').decode('ascii').replace("'", "\\'")
                     self.rec.write("'{{{0}{{{1}',\n".format(tdelta, bufstr))
                 self.send_parts.append(buf)
 
@@ -173,7 +177,10 @@ class WebSockifyRequestHandler(WebSocketRequestHandlerMixIn, SimpleHTTPRequestHa
 
             if self.rec:
                 # Python 3 compatible conversion
-                bufstr = buf.decode('latin1').encode('unicode_escape').decode('ascii').replace("'", "\\'")
+                if isinstance(buf, bytes):
+                    bufstr = buf.decode('latin1').encode('unicode_escape').decode('ascii').replace("'", "\\'")
+                else:
+                    bufstr = buf.encode('unicode_escape').decode('ascii').replace("'", "\\'")
                 self.rec.write("'}}{0}}}{1}',\n".format(tdelta, bufstr))
 
             bufs.append(buf)
@@ -427,6 +434,7 @@ class WebSockifyServer():
     @staticmethod
     def socket(host, port=None, connect=False, prefer_ipv6=False,
                unix_socket=None, use_ssl=False, tcp_keepalive=True,
+               ws=None, ws_headers=None,
                tcp_keepcnt=None, tcp_keepidle=None, tcp_keepintvl=None):
         """ Resolve a host (and optional port) to an IPv4 or IPv6
         address. Create a socket. Bind to it if listen is set,
@@ -435,7 +443,7 @@ class WebSockifyServer():
         flags = 0
         if host == '':
             host = None
-        if connect and not (port or unix_socket):
+        if connect and not (port or unix_socket or ws):
             raise Exception("Connect mode requires a port")
         if use_ssl and not ssl:
             raise Exception("SSL socket requested but Python SSL module not loaded.");
@@ -444,7 +452,10 @@ class WebSockifyServer():
         if not connect:
             flags = flags | socket.AI_PASSIVE
 
-        if not unix_socket:
+        if ws:
+            sock = WebSocket()
+            sock.connect(ws, headers=ws_headers)
+        elif not unix_socket:
             addrs = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM,
                     socket.IPPROTO_TCP, flags)
             if not addrs:

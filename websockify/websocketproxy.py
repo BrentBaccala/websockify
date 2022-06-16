@@ -20,6 +20,8 @@ from websockify import websockifyserver
 from websockify import auth_plugins as auth
 from urllib.parse import parse_qs, urlparse
 
+from . import websocket
+
 class ProxyRequestHandler(websockifyserver.WebSockifyRequestHandler):
 
     buffer_size = 65536
@@ -90,12 +92,17 @@ Traffic Legend:
 
         # Connect to the target
         if self.server.wrap_cmd:
-            msg = "connecting to command: '%s' (port %s)" % (" ".join(self.server.wrap_cmd), self.server.target_port)
+            self.dst_string = "'%s' (port %s)" % (" ".join(self.server.wrap_cmd), self.server.target_port)
+            msg = "connecting to command: " + self.dst_string
         elif self.server.unix_target:
-            msg = "connecting to unix socket: %s" % self.server.unix_target
+            self.dst_string = self.server.unix_target
+            msg = "connecting to unix socket: " + self.dst_string
+        elif self.server.ws_target:
+            self.dst_string = self.server.ws_target.format(path=self.path)
+            msg = "connecting to: " + self.dst_string
         else:
-            msg = "connecting to: %s:%s" % (
-                                    self.server.target_host, self.server.target_port)
+            self.dst_string = "%s:%s" % (self.server.target_host, self.server.target_port)
+            msg = "connecting to: " + self.dst_string
 
         if self.server.ssl_target:
             msg += " (using SSL)"
@@ -106,10 +113,11 @@ Traffic Legend:
                                                            self.server.target_port,
                                                            connect=True,
                                                            use_ssl=self.server.ssl_target,
+                                                           ws=self.server.ws_target.format(path=self.path),
+                                                           ws_headers=["{}: {}".format(k,v) for k,v in self.headers.items() if k in self.server.ws_relay_header],
                                                            unix_socket=self.server.unix_target)
         except Exception as e:
-            self.log_message("Failed to connect to %s:%s: %s",
-                             self.server.target_host, self.server.target_port, e)
+            self.log_message("Failed to connect to %s: %s", self.dst_string, e)
             raise self.CClose(1011, "Failed to connect to downstream server")
 
         self.request.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
@@ -126,8 +134,7 @@ Traffic Legend:
                 tsock.shutdown(socket.SHUT_RDWR)
                 tsock.close()
                 if self.verbose:
-                    self.log_message("%s:%s: Closed target",
-                            self.server.target_host, self.server.target_port)
+                    self.log_message("%s: Closed target", self.dst_string)
 
     def get_target(self, target_plugin):
         """
@@ -224,8 +231,7 @@ Traffic Legend:
                 if closed:
                     # TODO: What about blocking on client socket?
                     if self.verbose:
-                        self.log_message("%s:%s: Client closed connection",
-                                self.server.target_host, self.server.target_port)
+                        self.log_message("%s: Client closed connection", self.dst_string)
                     raise self.CClose(closed['code'], closed['reason'])
 
 
@@ -243,11 +249,13 @@ Traffic Legend:
 
             if target in ins:
                 # Receive target data, encode it and queue for client
-                buf = target.recv(self.buffer_size)
+                try:
+                    buf = target.recv(self.buffer_size)
+                except websocket.WebSocketWantReadError:
+                    continue
                 if len(buf) == 0:
                     if self.verbose:
-                        self.log_message("%s:%s: Target closed connection",
-                                self.server.target_host, self.server.target_port)
+                        self.log_message("%s: Target closed connection", self.dst_string)
                     raise self.CClose(1000, "Target closed")
 
                 cqueue.append(buf)
@@ -268,6 +276,8 @@ class WebSocketProxy(websockifyserver.WebSockifyServer):
         self.wrap_cmd       = kwargs.pop('wrap_cmd', None)
         self.wrap_mode      = kwargs.pop('wrap_mode', None)
         self.unix_target    = kwargs.pop('unix_target', None)
+        self.ws_target      = kwargs.pop('ws_target', None)
+        self.ws_relay_header= kwargs.pop('ws_relay_header', None)
         self.ssl_target     = kwargs.pop('ssl_target', None)
         self.heartbeat      = kwargs.pop('heartbeat', None)
 
@@ -328,6 +338,8 @@ class WebSocketProxy(websockifyserver.WebSockifyServer):
             dst_string = "'%s' (port %s)" % (" ".join(self.wrap_cmd), self.target_port)
         elif self.unix_target:
             dst_string = self.unix_target
+        elif self.ws_target:
+            dst_string = self.ws_target
         else:
             dst_string = "%s:%s" % (self.target_host, self.target_port)
 
@@ -473,6 +485,10 @@ def websockify_init():
             "supported ciphers run `openssl ciphers`")
     parser.add_option("--unix-target",
             help="connect to unix socket target", metavar="FILE")
+    parser.add_option("--ws-target", default=None,
+            help="connect to WebSocket target; include {path} in target string to relay path")
+    parser.add_option("--ws-relay-header", default=[], action="append",
+            help="header field to relay when connecting to a WebSocket target")
     parser.add_option("--inetd",
             help="inetd mode, receive listening socket from stdin", action="store_true")
     parser.add_option("--web", default=None, metavar="DIR",
@@ -641,7 +657,7 @@ def websockify_init():
 
     del opts.inetd
 
-    if opts.wrap_cmd or opts.unix_target or opts.token_plugin:
+    if opts.wrap_cmd or opts.unix_target or opts.ws_target or opts.token_plugin:
         opts.target_host = None
         opts.target_port = None
     else:

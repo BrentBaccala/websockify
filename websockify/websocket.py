@@ -330,7 +330,7 @@ class WebSocket(object):
         default implementation does nothing."""
         pass
 
-    def recv(self):
+    def recv(self, bufsize=None):
         """Read data from the WebSocket.
 
         This will return any available data on the socket (which may
