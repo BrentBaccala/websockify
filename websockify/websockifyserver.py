@@ -231,10 +231,15 @@ class WebSockifyRequestHandler(WebSocketRequestHandlerMixIn, SimpleHTTPRequestHa
 
         if self.record:
             # Record raw frame data as JavaScript array
-            fname = "%s.%s" % (self.record,
-                               self.handler_id)
+            fnum = self.handler_id
+            self.rec = None
+            while not self.rec:
+                fname = "%s.%s" % (self.record, fnum)
+                try:
+                    self.rec = open(fname, 'x+')
+                except FileExistsError:
+                    fnum += 1
             self.log_message("opening record file: %s", fname)
-            self.rec = open(fname, 'w+')
             self.rec.write("var VNC_frame_data = [\n")
 
         try:
