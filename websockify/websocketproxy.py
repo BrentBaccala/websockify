@@ -414,7 +414,6 @@ def select_ssl_version(version):
 def websockify_init():
     # Setup basic logging to stderr.
     logger = logging.getLogger(WebSocketProxy.log_prefix)
-    logger.propagate = False
     logger.setLevel(logging.INFO)
     stderr_handler = logging.StreamHandler()
     stderr_handler.setLevel(logging.DEBUG)
