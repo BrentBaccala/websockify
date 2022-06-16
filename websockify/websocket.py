@@ -74,6 +74,7 @@ class WebSocket(object):
         self._state = "new"
 
         self._partial_msg = b''
+        self._partial_msg_opcode = 0x0
 
         self._recv_buffer = b''
         self._recv_queue = []
@@ -359,6 +360,9 @@ class WebSocket(object):
         one WebSocket message. Callers should continue calling
         recvmsg() whilst pending() returns True.
 
+        WebSocket text frames will be returned as strings, while
+        WebSocket binary frames will be returned as byte arrays.
+
         Both WebSocketWantReadError and WebSocketWantWriteError can be
         raised when calling recvmsg().
         """
@@ -420,11 +424,14 @@ class WebSocket(object):
         peer. Unlike send() this method will preserve the data as a
         single WebSocket message.
 
+        Messages can be either strings, which will be sent as WebSocket
+        text frames, or byte arrays, which will be sent as binary frames.
+
         WebSocketWantWriteError can be raised if there is insufficient
         space in the underlying socket. sendmsg() must be called again
         once more space is available using the same arguments.
         """
-        if not isinstance(msg, bytes):
+        if not isinstance(msg, bytes) and not isinstance(msg, str):
             raise TypeError
 
         if self._sent_close:
@@ -440,7 +447,10 @@ class WebSocket(object):
             return len(msg)
 
         try:
-            self._sendmsg(0x2, msg)
+            if isinstance(msg, str):
+                self._sendmsg(0x1, msg.encode("utf-8"))
+            else:
+                self._sendmsg(0x2, msg)
         except WebSocketWantWriteError:
             self._previous_sendmsg = msg
             raise
@@ -613,11 +623,31 @@ class WebSocket(object):
                 self._partial_msg += frame["payload"]
 
                 if frame["fin"]:
-                    msg = self._partial_msg
+                    if self._partial_msg_opcode == 0x1:
+                        try:
+                            msg = self._partial_msg.decode("utf-8")
+                        except UnicodeDecodeError:
+                            self.shutdown(socket.SHUT_RDWR, 1007, "Protocol error: Invalid UTF-8 in text frame")
+                            continue
+                    else:
+                        msg = self._partial_msg
                     self._partial_msg = b''
+                    self._partial_msg_opcode == 0x0
                     return msg
             elif frame["opcode"] == 0x1:
-                self.shutdown(socket.SHUT_RDWR, 1003, "Unsupported: Text frames are not supported")
+                if self._partial_msg:
+                    self.shutdown(socket.SHUT_RDWR, 1002, "Protocol error: Unexpected new frame")
+                    continue
+
+                if frame["fin"]:
+                    try:
+                        return frame["payload"].decode("utf-8")
+                    except UnicodeDecodeError:
+                        self.shutdown(socket.SHUT_RDWR, 1007, "Protocol error: Invalid UTF-8 in text frame")
+                        continue
+                else:
+                    self._partial_msg = frame["payload"]
+                    self._partial_msg_opcode = 0x1
             elif frame["opcode"] == 0x2:
                 if self._partial_msg:
                     self.shutdown(socket.SHUT_RDWR, 1002, "Protocol error: Unexpected new frame")
@@ -627,6 +657,7 @@ class WebSocket(object):
                     return frame["payload"]
                 else:
                     self._partial_msg = frame["payload"]
+                    self._partial_msg_opcode = 0x2
             elif frame["opcode"] == 0x8:
                 if self._received_close:
                     continue
