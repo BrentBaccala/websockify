@@ -599,15 +599,15 @@ class WebSocket(object):
             frame = self._recv_queue.pop(0)
 
             if not self.client and not frame['masked']:
-                self.shutdown(socket.SHUT_RDWR, 1002, "Procotol error: Frame not masked")
+                self.shutdown(socket.SHUT_RDWR, 1002, "Protocol error: Frame not masked")
                 continue
             if self.client and frame['masked']:
-                self.shutdown(socket.SHUT_RDWR, 1002, "Procotol error: Frame masked")
+                self.shutdown(socket.SHUT_RDWR, 1002, "Protocol error: Frame masked")
                 continue
 
             if frame["opcode"] == 0x0:
                 if not self._partial_msg:
-                    self.shutdown(socket.SHUT_RDWR, 1002, "Procotol error: Unexpected continuation frame")
+                    self.shutdown(socket.SHUT_RDWR, 1002, "Protocol error: Unexpected continuation frame")
                     continue
 
                 self._partial_msg += frame["payload"]
@@ -620,7 +620,7 @@ class WebSocket(object):
                 self.shutdown(socket.SHUT_RDWR, 1003, "Unsupported: Text frames are not supported")
             elif frame["opcode"] == 0x2:
                 if self._partial_msg:
-                    self.shutdown(socket.SHUT_RDWR, 1002, "Procotol error: Unexpected new frame")
+                    self.shutdown(socket.SHUT_RDWR, 1002, "Protocol error: Unexpected new frame")
                     continue
 
                 if frame["fin"]:
@@ -650,7 +650,7 @@ class WebSocket(object):
                         try:
                             reason = reason.decode("UTF-8")
                         except UnicodeDecodeError:
-                            self.shutdown(socket.SHUT_RDWR, 1002, "Procotol error: Invalid UTF-8 in close")
+                            self.shutdown(socket.SHUT_RDWR, 1002, "Protocol error: Invalid UTF-8 in close")
                             continue
 
                 if code is None:
