@@ -103,7 +103,7 @@ class WebSocket(object):
             raise AttributeError("%s instance has no attribute '%s'" %
                                  (self.__class__.__name__, name))
 
-    def connect(self, uri, origin=None, protocols=[]):
+    def connect(self, uri, origin=None, protocols=[], headers=[]):
         """Establishes a new connection to a WebSocket server.
 
         This method connects to the host specified by uri and
@@ -165,6 +165,8 @@ class WebSocket(object):
             self._queue_str("Connection: upgrade\r\n")
             self._queue_str("Sec-WebSocket-Key: %s\r\n" % self._key)
             self._queue_str("Sec-WebSocket-Version: 13\r\n")
+            for hdr in headers:
+                self._queue_str("%s\r\n" % hdr)
 
             if origin is not None:
                 self._queue_str("Origin: %s\r\n" % origin)
